@@ -20,7 +20,6 @@ from vini_alert.table import (
     TEST_WINDOW_END,
     hourly_test_date,
     latest_real_day,
-    missing_day_note,
     prepare_rows,
     production_date,
     schedule_is_open,
@@ -103,11 +102,11 @@ def run(argv: list[str] | None = None) -> int:
     print(f"{report_date}: {len(rows)} alerts. Latest real day on the tab: {latest or 'none'}.")
 
     if not rows:
-        note = missing_day_note(report_date, latest)
-        print(note)
-        if args.dry_run:
-            return 0
-        return _send_text(note)
+        print(
+            f"No alerts for {report_date}. Nothing sent. "
+            f"Latest real day on the tab: {latest or 'none'}."
+        )
+        return 0
 
     path = render_png(rows, report_date, args.output)
     print(f"Wrote {path}.")
