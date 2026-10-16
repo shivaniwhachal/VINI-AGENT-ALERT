@@ -5,9 +5,20 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from vini_alert.csm_lookup import apply_csm, parse_csm_table
-from vini_alert.job import choose, destinations
+from unittest.mock import patch
+
+from vini_alert.job import choose, destinations, run
 from vini_alert.render import render_png
-from vini_alert.slack_client import SlackError, dm_destination, post_image, post_text
+from vini_alert.slack_client import (
+    CHANNEL_SECRET,
+    TEAM_CHANNEL,
+    SlackError,
+    _destination,
+    channel_destination,
+    dm_destination,
+    post_image,
+    post_text,
+)
 from vini_alert.table import (
     hourly_test_date,
     latest_real_day,
@@ -130,6 +141,13 @@ class PrepareTests(unittest.TestCase):
             self.assertIsNotNone(scheduled_day)
             os.environ["GITHUB_EVENT_NAME"] = "workflow_dispatch"
             self.assertEqual(choose(after, "2026-10-12", "hourly-test")[0], "2026-10-12")
+            os.environ["GITHUB_EVENT_NAME"] = "schedule"
+            saturday_evening = datetime(2026, 10, 17, 17, 30, tzinfo=IST)
+            monday_evening = datetime(2026, 10, 19, 17, 30, tzinfo=IST)
+            sunday_evening = datetime(2026, 10, 18, 17, 30, tzinfo=IST)
+            self.assertEqual(choose(saturday_evening, "2099-01-01", "production"), ("2026-10-16", "production"))
+            self.assertEqual(choose(monday_evening, "", "production"), ("2026-10-17", "production"))
+            self.assertEqual(choose(sunday_evening, "2026-10-17", "production"), (None, "production"))
         finally:
             if previous is None:
                 os.environ.pop("GITHUB_EVENT_NAME", None)
@@ -196,80 +214,158 @@ class CsmLookupTests(unittest.TestCase):
 
 
 class SlackDestinationTests(unittest.TestCase):
-    def test_channel_id_is_never_a_destination(self):
+    def test_only_production_posts_to_the_team_channel(self):
+        """5:30 PM production uses #vini-cs-team. Tester and manual runs stay a DM."""
         hostile = {
-            "SLACK_NOTIFY_CHANNEL_ID": "C0BPY9U15U5",
+            "SLACK_NOTIFY_CHANNEL_ID": "C0ABCDEF",
             "SLACK_NOTIFY_USER_ID": "U0C40E9HANQ",
-            "SLACK_TEAM_CHANNEL": "C0BPY9U15U5",
+            "SLACK_TEAM_CHANNEL": "C0ABCDEF",
             "SLACK_DM_CHANNEL": "C0ABCDEF",
             "POST_TO_CHANNEL": "true",
+            CHANNEL_SECRET: TEAM_CHANNEL,
         }
         self.assertEqual(dm_destination(hostile), "U0C40E9HANQ")
-        for mode in ("hourly-test", "production", "manual", ""):
+        self.assertEqual(channel_destination(hostile), TEAM_CHANNEL)
+        self.assertEqual(destinations("production", hostile), [TEAM_CHANNEL])
+        for mode in ("hourly-test", "manual", ""):
             found = destinations(mode, hostile)
             self.assertEqual(found, ["U0C40E9HANQ"])
             for dest in found:
                 self.assertFalse(dest.startswith("C"))
 
         channel_as_user = dict(hostile)
-        channel_as_user["SLACK_NOTIFY_USER_ID"] = "C0BPY9U15U5"
+        channel_as_user["SLACK_NOTIFY_USER_ID"] = TEAM_CHANNEL
         self.assertEqual(dm_destination(channel_as_user), "D0C40GC2CN8")
-        self.assertEqual(destinations("production", channel_as_user), ["D0C40GC2CN8"])
+        self.assertEqual(destinations("hourly-test", channel_as_user), ["D0C40GC2CN8"])
+        self.assertEqual(destinations("manual", channel_as_user), ["D0C40GC2CN8"])
+        self.assertEqual(destinations("production", channel_as_user), [TEAM_CHANNEL])
 
-        ignored = {"SLACK_NOTIFY_CHANNEL_ID": "C0BPY9U15U5"}
+        ignored = {"SLACK_NOTIFY_CHANNEL_ID": "C0ABCDEF"}
         self.assertEqual(dm_destination(ignored), "D0C40GC2CN8")
-        self.assertFalse(dm_destination(ignored).startswith("C"))
+        self.assertEqual(destinations("production", ignored), [TEAM_CHANNEL])
+        self.assertEqual(channel_destination({CHANNEL_SECRET: "not-a-channel"}), TEAM_CHANNEL)
+        self.assertEqual(channel_destination({CHANNEL_SECRET: "C0OTHERCHAN"}), "C0OTHERCHAN")
 
-        for channel_id in ("C0BPY9U15U5", "c0bpy9u15u5", "  C0BPY9U15U5  ", "C"):
+        for channel_id in (TEAM_CHANNEL, "c0bpy9u15u5", "  C0BPY9U15U5  ", "C"):
             with self.assertRaises(SlackError):
                 post_text("xoxb-test", channel_id, "nope")
             with self.assertRaises(SlackError):
                 post_image("xoxb-test", channel_id, Path("/tmp/does-not-need-to-exist.png"), "nope")
+            with self.assertRaises(SlackError):
+                _destination("xoxb-test", channel_id, False)
+        self.assertEqual(_destination("xoxb-test", TEAM_CHANNEL, True), TEAM_CHANNEL)
 
         root = Path(__file__).resolve().parents[1]
         self.assertFalse((root / ".github/workflows/daily-channel.yml").exists())
         workflow = (root / ".github/workflows/hourly-dm-test.yml").read_text()
-        self.assertNotIn("C0BPY9U15U5", workflow)
+        self.assertNotIn(TEAM_CHANNEL, workflow)
+        self.assertNotIn(CHANNEL_SECRET, workflow)
         self.assertNotIn("SLACK_NOTIFY_CHANNEL_ID", workflow)
-        self.assertIn('cron: "30 15-21 * * *"', workflow)
-        self.assertIn('TEST_WINDOW_END: "2026-10-17T03:45:00+05:30"', workflow)
+        self.assertNotIn("schedule:", workflow)
+        self.assertIn("workflow_dispatch:", workflow)
+        self.assertIn("MODE: hourly-test", workflow)
+        daily = (root / ".github/workflows/daily-dm.yml").read_text()
+        self.assertNotIn(TEAM_CHANNEL, daily)
+        self.assertNotIn("SLACK_NOTIFY_CHANNEL_ID", daily)
+        self.assertIn(CHANNEL_SECRET, daily)
+        self.assertIn("secrets." + CHANNEL_SECRET, daily)
+        self.assertIn('cron: "0 12 * * 1-6"', daily)
+        self.assertIn("github.event_name == 'schedule' && 'production' || 'manual'", daily)
         for path in (root / "vini_alert").glob("*.py"):
-            self.assertNotIn("C0BPY9U15U5", path.read_text())
+            text = path.read_text()
+            if path.name == "slack_client.py":
+                self.assertIn(TEAM_CHANNEL, text)
+                self.assertIn(CHANNEL_SECRET, text)
+            else:
+                self.assertNotIn(TEAM_CHANNEL, text)
+                self.assertNotIn(CHANNEL_SECRET, text)
 
-    def test_channel_secret_name_is_unused_and_c_ids_are_rejected(self):
-        """The #vini-cs-team secret is never read. Any C… id is not a destination."""
-        channel_secret = "SLACK_NOTIFY_" + "VINI_CS_TEAM_CHANNEL_ID"
+    def test_non_production_ignores_the_channel_secret(self):
+        """Tester modes never read a C id. Production reads only the team-channel secret."""
         packed = {
-            channel_secret: "C0BPY9U15U5",
-            "SLACK_NOTIFY_CHANNEL_ID": "C0BPY9U15U5",
+            CHANNEL_SECRET: TEAM_CHANNEL,
+            "SLACK_NOTIFY_CHANNEL_ID": "C0ABCDEF123",
             "SLACK_NOTIFY_USER_ID": "U0C40E9HANQ",
             "SOME_OTHER_CHANNEL": "C0ABCDEF123",
             "COLOR": "C0FFEE",
         }
         self.assertEqual(dm_destination(packed), "U0C40E9HANQ")
         self.assertEqual(destinations("hourly-test", packed), ["U0C40E9HANQ"])
+        self.assertEqual(destinations("manual", packed), ["U0C40E9HANQ"])
+        self.assertEqual(destinations("production", packed), [TEAM_CHANNEL])
         for dest in destinations("hourly-test", packed):
             self.assertFalse(dest[:1].upper() == "C")
 
-        only_channel_secret = {channel_secret: "C0BPY9U15U5"}
+        only_channel_secret = {CHANNEL_SECRET: TEAM_CHANNEL}
         self.assertEqual(dm_destination(only_channel_secret), "D0C40GC2CN8")
         self.assertEqual(destinations("", only_channel_secret), ["D0C40GC2CN8"])
+        self.assertEqual(destinations("production", only_channel_secret), [TEAM_CHANNEL])
         self.assertNotEqual(dm_destination(only_channel_secret), "D0BTPFZ3VB9")
+        self.assertNotIn("D0BTPFZ3VB9", destinations("production", only_channel_secret))
 
-        user_is_channel = {channel_secret: "C0BPY9U15U5", "SLACK_NOTIFY_USER_ID": "c0bpy9u15u5"}
+        user_is_channel = {CHANNEL_SECRET: TEAM_CHANNEL, "SLACK_NOTIFY_USER_ID": "c0bpy9u15u5"}
         self.assertEqual(dm_destination(user_is_channel), "D0C40GC2CN8")
         self.assertFalse(dm_destination(user_is_channel).startswith("C"))
+        self.assertEqual(destinations("production", user_is_channel), [TEAM_CHANNEL])
 
         root = Path(__file__).resolve().parents[1]
         workflow = (root / ".github/workflows/hourly-dm-test.yml").read_text()
-        self.assertNotIn(channel_secret, workflow)
-        self.assertNotIn("secrets." + channel_secret, workflow)
+        self.assertNotIn(CHANNEL_SECRET, workflow)
+        self.assertNotIn("secrets." + CHANNEL_SECRET, workflow)
         for path in (root / "vini_alert").rglob("*.py"):
             text = path.read_text()
-            self.assertNotIn(channel_secret, text)
             self.assertNotIn("environ.items", text)
             self.assertNotIn("environ.keys", text)
             self.assertNotIn("environ.values", text)
+            if path.name != "slack_client.py":
+                self.assertNotIn(CHANNEL_SECRET, text)
+
+
+class SendTargetTests(unittest.TestCase):
+    def _rows(self):
+        return [row("2026-10-15", "Sales IB", "attempts_low", "Alpha Store", "12", "<50/day", csm="a@spyne.ai")]
+
+    def _run(self, mode):
+        with patch("vini_alert.job.fetch_alert_rows", return_value=self._rows()), \
+             patch("vini_alert.job.fetch_csm_lookup", return_value={"by_id": {}}), \
+             patch("vini_alert.job.render_png", return_value=Path("/tmp/vini-accounts-alert.png")), \
+             patch("vini_alert.job.token_from_env", return_value="xoxb-test"), \
+             patch("vini_alert.job.post_text") as posted_text, \
+             patch("vini_alert.job.post_image") as posted_image, \
+             patch.dict(os.environ, {
+                 "SLACK_NOTIFY_USER_ID": "U0C40E9HANQ",
+                 CHANNEL_SECRET: TEAM_CHANNEL,
+             }, clear=False):
+            code = run(["--date", "2026-10-15", "--mode", mode])
+        return code, posted_text, posted_image
+
+    def test_production_posts_the_image_to_the_channel(self):
+        code, posted_text, posted_image = self._run("production")
+        self.assertEqual(code, 0)
+        posted_text.assert_not_called()
+        posted_image.assert_called_once()
+        self.assertEqual(posted_image.call_args.args[1], TEAM_CHANNEL)
+        self.assertTrue(posted_image.call_args.kwargs["allow_channel"])
+
+    def test_manual_and_hourly_stay_on_the_dm(self):
+        for mode in ("manual", "hourly-test"):
+            code, posted_text, posted_image = self._run(mode)
+            self.assertEqual(code, 0)
+            posted_text.assert_not_called()
+            self.assertEqual(posted_image.call_args.args[1], "U0C40E9HANQ")
+            self.assertFalse(posted_image.call_args.kwargs["allow_channel"])
+
+
+class MissingDayTests(unittest.TestCase):
+    def test_a_date_with_no_rows_sends_nothing(self):
+        with patch("vini_alert.job.fetch_alert_rows", return_value=[]), \
+             patch("vini_alert.job.fetch_csm_lookup", return_value={"by_id": {}}), \
+             patch("vini_alert.job.post_text") as posted_text, \
+             patch("vini_alert.job.post_image") as posted_image:
+            code = run(["--date", "2026-10-16", "--mode", "production"])
+        self.assertEqual(code, 0)
+        posted_text.assert_not_called()
+        posted_image.assert_not_called()
 
 
 class RenderTests(unittest.TestCase):

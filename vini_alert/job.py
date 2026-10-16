@@ -1,7 +1,7 @@
 """Clock for the public repo. This process does not depend on a Cursor chat.
 
-The only Slack destination is a DM: secret SLACK_NOTIFY_USER_ID, otherwise
-D0C40GC2CN8. SLACK_NOTIFY_CHANNEL_ID is not read. A channel id is never used.
+Tester runs DM SLACK_NOTIFY_USER_ID, otherwise D0C40GC2CN8.
+The 5:30 PM production run posts to #vini-cs-team.
 """
 
 from __future__ import annotations
@@ -35,8 +35,8 @@ def window_end() -> datetime:
 
 
 def destinations(mode: str = "", env: dict | None = None) -> list[str]:
-    """One DM, for every mode. `mode` cannot add a channel."""
-    return destinations_from_env(env)
+    """Production posts to the channel. Tester runs stay a DM."""
+    return destinations_from_env(env, mode)
 
 
 def choose(now: datetime, explicit: str, mode: str) -> tuple[str | None, str]:
@@ -112,7 +112,7 @@ def run(argv: list[str] | None = None) -> int:
     print(f"Wrote {path}.")
     if args.dry_run:
         return 0
-    return _send_image(path, comment_for(report_date, len(rows)))
+    return _send_image(path, comment_for(report_date, len(rows)), mode)
 
 
 def _one_dm() -> str:
@@ -134,11 +134,14 @@ def _send_text(text: str) -> int:
     return 0
 
 
-def _send_image(path, comment: str) -> int:
+def _send_image(path, comment: str, mode: str = "") -> int:
     try:
         token = token_from_env()
-        dest = _one_dm()
-        post_image(token, dest, path, comment)
+        found = destinations(mode)
+        if len(found) != 1:
+            raise SlackError("Refusing to post without one destination.")
+        dest = found[0]
+        post_image(token, dest, path, comment, allow_channel=(mode == "production"))
         print(f"Posted the table to {dest}.")
     except SlackError as exc:
         print(str(exc), file=sys.stderr)

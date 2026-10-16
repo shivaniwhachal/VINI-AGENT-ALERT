@@ -4,7 +4,7 @@
  * Paste the whole file into Extensions → Apps Script on VINI Accounts Alert Tracker.
  * Advanced Google service: Drive API (v2) as "Drive" (for .xlsx attachments).
  *
- * Version: 2026-10-16-csm-no-sheet-write
+ * Version: 2026-10-17-mail-once-daily
  *
  * Why 14 Oct and 15 Oct were missing
  *   The 16 Oct log says the latest mail was already labeled VINI-Alert-Processed,
@@ -22,21 +22,19 @@
  *
  * Run once after pasting, in this order:
  *   1. verifyViniAlertCodeVersion
- *   2. setupCsmSheet
- *   3. catchUpMetabaseEmails
- *   4. setupDailyTrigger
+ *   2. removeAllTriggers
+ *   3. setupDailyTrigger
  *
- * catchUpMetabaseEmails re-reads labeled mail from 13 Oct, upserts those days,
- * and appends Alerts for any complete day that does not already have real rows.
- * A day under 400 call attempts, or with fewer than 3 agents, is left open.
- * 13 Oct is about 141 attempts, so it is not alerted. 14 Oct is complete on
- * Daily and is filled even when the mail has no 15 Oct. One agent at zero
- * attempts does not cancel the agents that have data.
+ * Do not run catchUpMetabaseEmails on this paste. The sheet already has the
+ * rows from the earlier catch-up. The daily mail is the only writer now.
  *
- * After that, the hourly trigger keeps doing the same without this chat.
+ * The daily trigger runs once, at 4:00 AM India time, after the Metabase
+ * mail that arrives at 22:00 UTC. It writes Daily, Alerts, and Log only
+ * when that new mail is in the inbox. It does not write every hour.
+ * Slack is not sent from here. The GitHub job only reads the Alerts tab.
  * Sunday still does not create Alerts. Monday uses Saturday.
  */
-var VINI_SCRIPT_VERSION = '2026-10-16-csm-no-sheet-write';
+var VINI_SCRIPT_VERSION = '2026-10-17-mail-once-daily';
 var CSM_TAB_GID = 376341429;
 var ALERTS_FILL_SINCE = '2026-10-13';
 var INCOMPLETE_ATTEMPT_FLOOR = 400;
@@ -325,8 +323,9 @@ function istDayOfWeek_() {
 }
 function calendarAsOf_() {
   var dow = istDayOfWeek_();
-  if (dow === 7) return null;
   var today = Utilities.formatDate(new Date(), SHARED_TIMEZONE, 'yyyy-MM-dd');
+  // Sunday 3:30 AM IST is the Saturday mail. Write Saturday. Slack stays quiet on Sunday.
+  if (dow === 7) return addDays_(today, -1);
   if (dow === 1) return addDays_(today, -2);
   return addDays_(today, -1);
 }
@@ -371,8 +370,8 @@ function installViniAlertScriptProperties() {
   Logger.log('Script properties seeded (EMAIL_FROM, EMAIL_SUBJECT, ALERTS_FILL_SINCE).');
 }
 function verifyViniAlertCodeVersion() {
-  if (String(VINI_SCRIPT_VERSION) !== '2026-10-16-csm-no-sheet-write') {
-    throw new Error('Wrong paste — expected 2026-10-16-csm-no-sheet-write');
+  if (String(VINI_SCRIPT_VERSION) !== '2026-10-17-mail-once-daily') {
+    throw new Error('Wrong paste — expected 2026-10-17-mail-once-daily');
   }
   if (typeof catchUpMetabaseEmails !== 'function') throw new Error('Wrong paste — missing catchUpMetabaseEmails');
   if (typeof fillMissingAlertsFromDaily_ !== 'function') throw new Error('Wrong paste — missing fillMissingAlertsFromDaily_');
@@ -422,11 +421,14 @@ var LIVE_ACCOUNTS_GID = 699048576;
 
 function setupDailyTrigger() {
   deleteTriggers_('processLatestMetabaseEmail');
+  // 22:00 UTC is 3:30 AM IST. The 4:00 AM IST hour is the first full hour after that mail.
   ScriptApp.newTrigger('processLatestMetabaseEmail')
     .timeBased()
-    .everyHours(1)
+    .everyDays(1)
+    .atHour(4)
+    .inTimezone(SHARED_TIMEZONE)
     .create();
-  Logger.log('Hourly trigger: processLatestMetabaseEmail. New mail updates Daily. Missing Alerts days are filled from Daily.');
+  Logger.log('Daily trigger: processLatestMetabaseEmail at 4:00 AM IST, after the 22:00 UTC Metabase mail. No hourly write.');
 }
 function setupSlackDailyTrigger() {
   setupDailyTrigger();
@@ -435,23 +437,10 @@ function processLatestMetabaseEmail() {
   runEmailJob_({
     markProcessed: true,
     skipProcessed: true,
-    limit: 10,
+    limit: 5,
     logWhenEmpty: false,
     runLabel: 'processLatestMetabaseEmail',
   });
-  var target = calendarAsOf_();
-  if (target && !dailyHasCompleteDay_(target) && shouldReopenLabeled_()) {
-    runEmailJob_({
-      markProcessed: true,
-      skipProcessed: false,
-      limit: 8,
-      minDay: addDays_(target, -5),
-      queryExtra: ' newer_than:10d',
-      logWhenEmpty: false,
-      runLabel: 'reprocessRecentMail',
-    });
-  }
-  fillMissingAlertsFromDaily_();
 }
 function testWithLatestEmail() {
   runEmailJob_({ markProcessed: false, skipProcessed: false, limit: 1, runLabel: 'testWithLatestEmail' });
@@ -526,13 +515,6 @@ function processOneThread_(thread, opts) {
   var span = activitySpan_(rows);
   var dailyCount = upsertMetabaseRowsToDaily_(rows, { minDay: opts.minDay });
   if (opts.markProcessed) markEmailProcessed_(thread, messageId);
-  if (shouldSkipSlackRunToday_() && !opts.asOf) {
-    logViniRun({
-      run: runLabel, asOf: '', dailyUpserted: dailyCount, alertsAppended: 0,
-      status: 'Done', notes: 'Sunday — Daily upsert ' + dailyCount + ' rows (' + span + '); Alerts are not created on Sunday',
-    });
-    return;
-  }
   var asOf = resolveReportAsOf_(rows, opts);
   if (!asOf) {
     logViniRun({

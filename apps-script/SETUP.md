@@ -1,4 +1,4 @@
-# Paste this script and turn the hourly fill back on
+# Paste this script and run it once a day, after the Metabase mail
 
 The Slack table is sent by GitHub Actions in [shivaniwhachal/VINI-AGENT-ALERT](https://github.com/shivaniwhachal/VINI-AGENT-ALERT). It does not run from this chat, and it does not use cron. The Apps Script only fills the tracker. It does not post to Slack.
 
@@ -6,7 +6,7 @@ Spreadsheet: **VINI Accounts Alert Tracker**
 
 `1Mgg5Xrrkza55VcsofSPOsKWdo1-zFO19luusZUt0-Ww`
 
-Script file to paste: [Code.gs](Code.gs), version `2026-10-16-csm-no-sheet-write`.
+Script file to paste: [Code.gs](Code.gs), version `2026-10-17-mail-once-daily`.
 
 ## 1. Keep the sheet viewable by link
 
@@ -33,12 +33,12 @@ Select each function in the toolbar and press Run. Approve the Gmail, Sheets, an
 
 | Order | Function | What you should see |
 | --- | --- | --- |
-| 1 | `verifyViniAlertCodeVersion` | Log: `OK — 2026-10-16-csm-no-sheet-write` |
+| 1 | `verifyViniAlertCodeVersion` | Log: `OK — 2026-10-17-mail-once-daily` |
 | 2 | `setupCsmSheet` | A toast that the CSM tab is readable. Alerts column I is not changed. |
 | 3 | `catchUpMetabaseEmails` | Log rows for the re-read mail and for `fillMissingAlertsFromDaily_`. This can take a few minutes. |
-| 4 | `setupDailyTrigger` | Log: an hourly trigger on `processLatestMetabaseEmail`. |
+| 4 | `setupDailyTrigger` | Log: one daily trigger at 4:00 AM IST, after the 22:00 UTC mail. |
 
-If an older trigger is still listed under Triggers, run `removeAllTriggers`, then run `setupDailyTrigger` again.
+Run `removeAllTriggers` first if an hourly `processLatestMetabaseEmail` trigger is still listed. Then run `setupDailyTrigger` once. Leave that one daily trigger. Do not put the hourly trigger back.
 
 ## 4. CSM names
 
@@ -61,11 +61,11 @@ The Slack image reads the CSM tab (gid `376341429`):
 | --- | --- | --- |
 | 13 Oct | Thin. About 141 attempts, and Service Outbound is missing. | Left open. A day under 400 attempts is not alerted. |
 | 14 Oct | Complete. All 4 agents, about 2352 attempts. | Alerts are written for 14 Oct from Daily, even if the mail has no 15 Oct rows. Rules, new-breach-only, and the live-date gate are unchanged. One agent with zero attempts does not cancel the others. |
-| 15 Oct | Not on Daily. The mail opened at 2:10 AM IST on 16 Oct had no 15 Oct activity. | If a re-read attachment now has a full 15 Oct (at least 3 agents and 400 attempts), Daily and Alerts get that day. If it still does not, the Log says 15 Oct is still open. The hourly trigger fills it when a later mail brings a full day. |
+| 15 Oct | Not on Daily. The mail opened at 2:10 AM IST on 16 Oct had no 15 Oct activity. | A later 22:00 UTC mail that contains a full 15 Oct writes that day. A day under 400 attempts stays open. |
 
-Sunday still does not create Alerts. Monday uses Saturday. An hour with no new unlabeled mail does not add a “no email” row to the Log.
+Sunday still does not create Alerts. Monday uses Saturday. A run with no new Metabase mail does not write Daily, Alerts, or Log.
 
-The image sends only rows that are actually on the Alerts tab for that date. Notes that start with `Metabase 4-file backfill` stay out. If the date has no real rows, the DM gets the not-sent note and no table.
+The image sends only rows that are actually on the Alerts tab for that date. Notes that start with `Metabase 4-file backfill` stay out. If the date has no real rows, nothing is sent: no image and no note.
 
 ## 6. Slack
 
@@ -74,15 +74,16 @@ Repo: `shivaniwhachal/VINI-AGENT-ALERT`.
 These Actions secrets are already created:
 
 - `SLACK_BOT_TOKEN`
-- `SLACK_NOTIFY_USER_ID`
+- `SLACK_NOTIFY_USER_ID` — tester and manual DMs
+- `SLACK_NOTIFY_VINI_CS_TEAM_CHANNEL_ID` — `#vini-cs-team` for the 5:30 PM run
 - `SLACK_NOTIFY_CHANNEL_ID` — present, and ignored
 
-The hourly workflow posts only to the DM in `SLACK_NOTIFY_USER_ID`. If that secret is empty or starts with `C`, the fallback is `D0C40GC2CN8`. It never posts to a channel.
+`.github/workflows/daily-dm.yml` runs at 5:30 PM IST, Monday through Saturday, and posts the image to `#vini-cs-team`. Sunday sends nothing. Monday’s image is Saturday. Tuesday through Saturday use yesterday. If that date is not on the Alerts tab, the run sends nothing.
 
-Cron `30 15-21 * * *` (UTC) is 9:00 PM through 3:00 AM IST on the night of 16 Oct 2026. The 3:00 AM IST run on 17 Oct 2026 still sends. At 3:45 AM IST a scheduled run no-ops. **Run workflow** can still DM one date. Type the date. It still goes to the DM.
+**Run workflow** and `.github/workflows/hourly-dm-test.yml` stay on the bot DM. If `SLACK_NOTIFY_USER_ID` is empty or starts with `C`, the fallback is `D0C40GC2CN8`.
 
 Satchit’s DM `D0BTPFZ3VB9` is not used.
 
 The uploaded file name is `vini-accounts-alert.png`. The Slack file title is `Daily VINI Report`.
 
-On GitHub, open the repo → **Actions** → enable workflows if GitHub asks. The workflow file is `.github/workflows/hourly-dm-test.yml`. No cron job is required on any machine.
+On GitHub, open the repo → **Actions** → enable workflows if GitHub asks. No cron job is required on any machine.

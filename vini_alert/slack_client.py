@@ -14,15 +14,18 @@ class SlackError(RuntimeError):
 
 
 FALLBACK_DM = "D0C40GC2CN8"
+# 5:30 PM production report. #vini-cs-team.
+TEAM_CHANNEL = "C0BPY9U15U5"
+CHANNEL_SECRET = "SLACK_NOTIFY_VINI_CS_TEAM_CHANNEL_ID"
 
 
 def is_channel_id(value: str) -> bool:
-    """Public Slack channel ids start with C. Those are never a destination."""
+    """Public Slack channel ids start with C."""
     return str(value or "").strip()[:1].upper() == "C"
 
 
 def dm_destination(env: dict | None = None) -> str:
-    """SLACK_NOTIFY_USER_ID, or the fallback DM. Channel secrets are not read."""
+    """SLACK_NOTIFY_USER_ID, or the fallback DM. Tester runs use this."""
     source = os.environ if env is None else env
     raw = str(source.get("SLACK_NOTIFY_USER_ID") or "").strip()
     if raw and not is_channel_id(raw):
@@ -30,8 +33,22 @@ def dm_destination(env: dict | None = None) -> str:
     return FALLBACK_DM
 
 
-def destinations_from_env(env: dict | None = None) -> list[str]:
-    """The only destination list. A channel id is dropped, never sent."""
+def channel_destination(env: dict | None = None) -> str:
+    """The 5:30 PM channel. Reads only SLACK_NOTIFY_VINI_CS_TEAM_CHANNEL_ID."""
+    source = os.environ if env is None else env
+    raw = str(source.get(CHANNEL_SECRET) or "").strip()
+    if is_channel_id(raw):
+        return raw
+    return TEAM_CHANNEL
+
+
+def destinations_from_env(env: dict | None = None, mode: str = "") -> list[str]:
+    """Production goes to the channel. Every other mode stays a DM."""
+    if mode == "production":
+        dest = channel_destination(env)
+        if not is_channel_id(dest):
+            return []
+        return [dest]
     dest = dm_destination(env)
     if is_channel_id(dest):
         return []
@@ -71,14 +88,21 @@ def _dm_channel(token: str, destination: str) -> str:
     return opened
 
 
-def post_text(token: str, destination: str, text: str) -> None:
-    dm = _dm_channel(token, destination)
-    _api(token, "chat.postMessage", {"channel": dm, "text": text})
+def _destination(token: str, destination: str, allow_channel: bool) -> str:
+    dest = str(destination or "").strip()
+    if allow_channel and is_channel_id(dest):
+        return dest
+    return _dm_channel(token, dest)
 
 
-def post_image(token: str, destination: str, path: Path, comment: str) -> None:
+def post_text(token: str, destination: str, text: str, allow_channel: bool = False) -> None:
+    channel = _destination(token, destination, allow_channel)
+    _api(token, "chat.postMessage", {"channel": channel, "text": text})
+
+
+def post_image(token: str, destination: str, path: Path, comment: str, allow_channel: bool = False) -> None:
     """Upload vini-accounts-alert.png with the Slack file title Daily VINI Report."""
-    dm = _dm_channel(token, destination)
+    dm = _destination(token, destination, allow_channel)
     file_bytes = path.read_bytes()
     opened = _api(
         token,

@@ -1,14 +1,15 @@
 # VINI Accounts Alert
 
-GitHub Actions in this repo reads the Alerts tab and sends a Slack DM. It does not post to a Slack channel.
+GitHub Actions in this repo reads the Alerts tab. The 5:30 PM IST run posts the image to `#vini-cs-team`. Tester and manual runs stay a bot DM.
 
 Repository: [shivaniwhachal/VINI-AGENT-ALERT](https://github.com/shivaniwhachal/VINI-AGENT-ALERT). This replaces `pmm-spyne/VINI-AGENT-ALERT-`. Do not push to that repo.
 
 | Piece | Where |
 | --- | --- |
-| Paste this into the tracker | [apps-script/Code.gs](apps-script/Code.gs) version `2026-10-16-csm-no-sheet-write` |
+| Paste this into the tracker | [apps-script/Code.gs](apps-script/Code.gs) version `2026-10-17-mail-once-daily` |
 | Clicks you have to do yourself | [apps-script/SETUP.md](apps-script/SETUP.md) |
-| Hourly DM | [.github/workflows/hourly-dm-test.yml](.github/workflows/hourly-dm-test.yml) |
+| 5:30 PM channel post | [.github/workflows/daily-dm.yml](.github/workflows/daily-dm.yml) |
+| Manual tester DM | [.github/workflows/hourly-dm-test.yml](.github/workflows/hourly-dm-test.yml) |
 
 Tracker: `1Mgg5Xrrkza55VcsofSPOsKWdo1-zFO19luusZUt0-Ww`. Alerts gid `818793773`. CSM gid `376341429`. Keep the sheet viewable by anyone with the link.
 
@@ -17,22 +18,21 @@ Tracker: `1Mgg5Xrrkza55VcsofSPOsKWdo1-zFO19luusZUt0-Ww`. Alerts gid `818793773`.
 These Actions secrets are already on the repo:
 
 - `SLACK_BOT_TOKEN`
-- `SLACK_NOTIFY_USER_ID` — the only destination
+- `SLACK_NOTIFY_USER_ID` — tester and manual DMs
+- `SLACK_NOTIFY_VINI_CS_TEAM_CHANNEL_ID` — the 5:30 PM channel, `#vini-cs-team`
 - `SLACK_NOTIFY_CHANNEL_ID` — ignored. The code never reads it.
 
-If `SLACK_NOTIFY_USER_ID` is empty, or its value starts with `C`, the DM falls back to `D0C40GC2CN8`. A user id (`U…`) is opened as a DM. Nothing is posted to `#vini-cs-team`.
+The 5:30 PM schedule posts to the channel secret. If that secret is empty or does not start with `C`, the fallback is `C0BPY9U15U5`. Tester runs and **Run workflow** post to `SLACK_NOTIFY_USER_ID`. If that value is empty or starts with `C`, the DM falls back to `D0C40GC2CN8`. Satchit’s DM is not used.
 
 The uploaded file name is `vini-accounts-alert.png`. The Slack file title is `Daily VINI Report`.
 
 ## Schedule
 
-Cron `30 15-21 * * *` is UTC. That is 9:00 PM, 10:00 PM, 11:00 PM, 12:00 AM, 1:00 AM, 2:00 AM, and 3:00 AM IST, on the night of 16 Oct 2026.
+Cron `0 12 * * 1-6` is UTC. That is 5:30 PM IST, Monday through Saturday. Sunday has no run.
 
-The 3:00 AM IST run on 17 Oct 2026 still sends. At 3:45 AM IST the schedule stops. A later scheduled run exits without calling Slack.
+Monday’s image is Saturday. Tuesday through Saturday use yesterday. The image contains only rows on the Alerts tab for that date. Notes that start with `Metabase 4-file backfill` are left out. If that date has no rows, nothing is sent: no image and no note, including on the channel.
 
-`workflow_dispatch` can still DM one date. Type `YYYY-MM-DD` in the date input. That run still goes to the DM, never a channel. Leave the date empty after the window and the run no-ops.
-
-Each hour uses one date. 12:00 AM is 2026-10-05, 1:00 AM is 2026-10-03, 2:00 AM is 2026-10-14, and 3:00 AM is 2026-10-15. The image contains only rows that exist on the Alerts tab for that date. Notes that start with `Metabase 4-file backfill` are left out. If that date has no real rows, the DM gets the not-sent note and no table.
+**Run workflow** on Daily DM still sends a DM. It does not post to the channel. Hourly DM is manual only and also stays a DM.
 
 ## CSM column
 

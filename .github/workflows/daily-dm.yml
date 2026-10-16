@@ -2,14 +2,15 @@ name: Daily DM
 
 # 12:00 UTC is 5:30 PM IST, Monday through Saturday.
 # Sunday has no run. Monday's image is Saturday. Tuesday–Saturday use yesterday.
-# workflow_dispatch can DM one YYYY-MM-DD. This file never posts to a channel.
+# The schedule posts to #vini-cs-team. Run workflow stays a DM.
+# A date with no Alerts rows sends nothing: no image and no note.
 on:
   schedule:
     - cron: "0 12 * * 1-6"
   workflow_dispatch:
     inputs:
       date:
-        description: "YYYY-MM-DD to DM. Blank uses the 5:30 PM calendar. Never a channel."
+        description: "Manual DM only. YYYY-MM-DD. Blank uses the 5:30 PM calendar and still DMs."
         required: false
         type: string
 
@@ -27,11 +28,13 @@ jobs:
       - name: Install a font for the table
         run: sudo apt-get update && sudo apt-get install -y fonts-dejavu-core
       - run: pip install -r requirements.txt
-      - name: DM the Alerts tab for one date
+      - name: Send the Alerts image
         env:
-          MODE: production
+          # Schedule is the 5:30 PM channel post. Run workflow stays a DM.
+          MODE: ${{ github.event_name == 'schedule' && 'production' || 'manual' }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_NOTIFY_USER_ID: ${{ secrets.SLACK_NOTIFY_USER_ID }}
+          SLACK_NOTIFY_VINI_CS_TEAM_CHANNEL_ID: ${{ secrets.SLACK_NOTIFY_VINI_CS_TEAM_CHANNEL_ID }}
           REPORT_DATE: ${{ github.event.inputs.date }}
         run: python -m vini_alert
