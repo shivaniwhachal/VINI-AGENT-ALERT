@@ -43,7 +43,11 @@ def destinations(mode: str = "", env: dict | None = None) -> list[str]:
 def choose(now: datetime, explicit: str, mode: str) -> tuple[str | None, str]:
     event = os.environ.get("GITHUB_EVENT_NAME", "").strip()
     resolved = mode or ("manual" if explicit else "")
-    # A scheduled run never uses a passed-in date, and it stops at 3:45 AM IST.
+    # The 5:30 PM job uses the India calendar. Sunday sends nothing.
+    # Monday sends Saturday. Tuesday–Saturday send yesterday.
+    if event == "schedule" and resolved == "production":
+        return production_date(now), "production"
+    # The night tester stops at 3:45 AM IST. A schedule never uses a typed date.
     if event == "schedule":
         if not schedule_is_open(now, window_end()):
             return None, resolved or "hourly-test"

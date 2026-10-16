@@ -1,12 +1,9 @@
 name: Hourly DM
 
-# 15:30–21:30 UTC is 9:00 PM–3:00 AM IST.
-# The night of 16 Oct 2026 only. The 3:00 AM IST run still sends.
-# At 3:45 AM IST on 17 Oct 2026 the script no-ops.
+# The 9:00 PM–3:00 AM tester clock is finished.
 # workflow_dispatch can still DM one date. This file never posts to a channel.
+# The everyday send is daily-dm.yml at 5:30 PM IST.
 on:
-  schedule:
-    - cron: "30 15-21 * * *"
   workflow_dispatch:
     inputs:
       date:
@@ -28,7 +25,7 @@ jobs:
       - name: Install a font for the table
         run: sudo apt-get update && sudo apt-get install -y fonts-dejavu-core
       - run: pip install -r requirements.txt
-      - name: DM one date, or no-op after 3:45 AM IST on 17 Oct 2026
+      - name: DM one date from the Alerts tab
         env:
           MODE: hourly-test
           GITHUB_EVENT_NAME: ${{ github.event_name }}
