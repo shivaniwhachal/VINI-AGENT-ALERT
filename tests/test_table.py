@@ -148,6 +148,10 @@ class PrepareTests(unittest.TestCase):
             self.assertEqual(choose(saturday_evening, "2099-01-01", "production"), ("2026-10-16", "production"))
             self.assertEqual(choose(monday_evening, "", "production"), ("2026-10-17", "production"))
             self.assertEqual(choose(sunday_evening, "2026-10-17", "production"), (None, "production"))
+            presentation = datetime(2026, 10, 21, 17, 30, tzinfo=IST)
+            day_after = datetime(2026, 10, 22, 17, 30, tzinfo=IST)
+            self.assertEqual(choose(presentation, "2026-10-20", "production"), (None, "production"))
+            self.assertEqual(choose(day_after, "", "production"), ("2026-10-21", "production"))
         finally:
             if previous is None:
                 os.environ.pop("GITHUB_EVENT_NAME", None)
@@ -354,6 +358,25 @@ class SendTargetTests(unittest.TestCase):
             posted_text.assert_not_called()
             self.assertEqual(posted_image.call_args.args[1], "U0C40E9HANQ")
             self.assertFalse(posted_image.call_args.kwargs["allow_channel"])
+
+
+class PauseTests(unittest.TestCase):
+    def test_presentation_day_sends_nothing(self):
+        class Clock:
+            @staticmethod
+            def now(tz=None):
+                return datetime(2026, 10, 21, 17, 30, tzinfo=IST)
+
+        with patch("vini_alert.job.datetime", Clock), \
+             patch("vini_alert.job.fetch_alert_rows") as fetched, \
+             patch("vini_alert.job.post_text") as posted_text, \
+             patch("vini_alert.job.post_image") as posted_image, \
+             patch.dict(os.environ, {"GITHUB_EVENT_NAME": "schedule", "MODE": "production"}, clear=False):
+            code = run(["--mode", "production"])
+        self.assertEqual(code, 0)
+        fetched.assert_not_called()
+        posted_text.assert_not_called()
+        posted_image.assert_not_called()
 
 
 class MissingDayTests(unittest.TestCase):
