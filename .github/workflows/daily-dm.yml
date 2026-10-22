@@ -2,8 +2,9 @@ name: Daily DM
 
 # 12:00 UTC is 5:30 PM IST, Monday through Saturday.
 # Sunday has no run. Monday's image is Saturday. Tuesday–Saturday use yesterday.
-# The schedule posts to #vini-cs-team. Run workflow stays a DM.
-# A date with no Alerts rows sends nothing: no image and no note.
+# The schedule is installed. PRODUCTION_SENDS_LIVE in job.py is false,
+# so this run exits without Slack until that flag is turned on.
+# Run workflow stays a DM. A date with no Alerts rows sends nothing.
 on:
   schedule:
     - cron: "0 12 * * 1-6"

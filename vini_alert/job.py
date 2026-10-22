@@ -34,9 +34,8 @@ def window_end() -> datetime:
     return datetime.fromisoformat(raw)
 
 
-# 21 Oct 2026 is the CSM presentation. That 5:30 PM run sends nothing.
-# 22 Oct 2026 resumes: Thursday's image is Wednesday.
-PRODUCTION_PAUSE_DATES = {"2026-10-21"}
+# The 5:30 PM channel report stays off until this is turned back on.
+PRODUCTION_SENDS_LIVE = False
 
 
 def destinations(mode: str = "", env: dict | None = None) -> list[str]:
@@ -45,7 +44,8 @@ def destinations(mode: str = "", env: dict | None = None) -> list[str]:
 
 
 def production_paused(now: datetime) -> bool:
-    return now.astimezone(IST).date().isoformat() in PRODUCTION_PAUSE_DATES
+    del now
+    return not PRODUCTION_SENDS_LIVE
 
 
 def choose(now: datetime, explicit: str, mode: str) -> tuple[str | None, str]:
@@ -53,7 +53,7 @@ def choose(now: datetime, explicit: str, mode: str) -> tuple[str | None, str]:
     resolved = mode or ("manual" if explicit else "")
     # The 5:30 PM job uses the India calendar. Sunday sends nothing.
     # Monday sends Saturday. Tuesday–Saturday send yesterday.
-    # 21 Oct 2026 is paused for the CSM presentation. 22 Oct resumes.
+    # PRODUCTION_SENDS_LIVE false holds every channel run.
     if event == "schedule" and resolved == "production":
         if production_paused(now):
             return None, "production"
@@ -94,8 +94,7 @@ def run(argv: list[str] | None = None) -> int:
 
     if report_date is None:
         if mode == "production" and production_paused(now):
-            paused = now.astimezone(IST).date().isoformat()
-            print(f"Paused on {paused}. No image and no note. The next send is the following scheduled day.")
+            print("Channel report is paused. No image and no note.")
             return 0
         if mode == "hourly-test" or os.environ.get("GITHUB_EVENT_NAME", "").strip() == "schedule":
             print(

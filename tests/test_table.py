@@ -145,13 +145,14 @@ class PrepareTests(unittest.TestCase):
             saturday_evening = datetime(2026, 10, 17, 17, 30, tzinfo=IST)
             monday_evening = datetime(2026, 10, 19, 17, 30, tzinfo=IST)
             sunday_evening = datetime(2026, 10, 18, 17, 30, tzinfo=IST)
-            self.assertEqual(choose(saturday_evening, "2099-01-01", "production"), ("2026-10-16", "production"))
-            self.assertEqual(choose(monday_evening, "", "production"), ("2026-10-17", "production"))
-            self.assertEqual(choose(sunday_evening, "2026-10-17", "production"), (None, "production"))
-            presentation = datetime(2026, 10, 21, 17, 30, tzinfo=IST)
-            day_after = datetime(2026, 10, 22, 17, 30, tzinfo=IST)
-            self.assertEqual(choose(presentation, "2026-10-20", "production"), (None, "production"))
-            self.assertEqual(choose(day_after, "", "production"), ("2026-10-21", "production"))
+            with patch("vini_alert.job.PRODUCTION_SENDS_LIVE", True):
+                self.assertEqual(choose(saturday_evening, "2099-01-01", "production"), ("2026-10-16", "production"))
+                self.assertEqual(choose(monday_evening, "", "production"), ("2026-10-17", "production"))
+                self.assertEqual(choose(sunday_evening, "2026-10-17", "production"), (None, "production"))
+                self.assertEqual(choose(datetime(2026, 10, 22, 17, 30, tzinfo=IST), "", "production"), ("2026-10-21", "production"))
+            for day in (21, 22, 23, 26):
+                held = datetime(2026, 10, day, 17, 30, tzinfo=IST)
+                self.assertEqual(choose(held, "2026-10-20", "production"), (None, "production"))
         finally:
             if previous is None:
                 os.environ.pop("GITHUB_EVENT_NAME", None)
@@ -361,11 +362,11 @@ class SendTargetTests(unittest.TestCase):
 
 
 class PauseTests(unittest.TestCase):
-    def test_presentation_day_sends_nothing(self):
+    def test_channel_report_stays_off(self):
         class Clock:
             @staticmethod
             def now(tz=None):
-                return datetime(2026, 10, 21, 17, 30, tzinfo=IST)
+                return datetime(2026, 10, 22, 17, 30, tzinfo=IST)
 
         with patch("vini_alert.job.datetime", Clock), \
              patch("vini_alert.job.fetch_alert_rows") as fetched, \
